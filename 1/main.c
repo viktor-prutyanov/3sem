@@ -71,6 +71,24 @@ int main(int argc, char *argv[])
     }
     else if (argc == 2) //Tranceiver mode
     {   
+        int file_fd = open(argv[1], O_RDONLY);
+        if (file_fd == -1)
+        {
+            printf("File opening error.\n");
+            return -1;
+        }
+
+        char tx_pid_str[TX_PID_STR_SIZE] = {};
+        sprintf(tx_pid_str, "P%d", getpid());
+
+        errno = 0;
+        if (mkfifo(tx_pid_str, 0666) && (errno != EEXIST))
+        {
+            printf("FIFO '%s' creation error.\n", tx_pid_str);
+            close(file_fd);
+            return -1;
+        }
+
         //Handshake
         errno = 0;
         if (mkfifo(HNDSHK_FIFO_NAME, 0666) && (errno != EEXIST))
@@ -86,27 +104,9 @@ int main(int argc, char *argv[])
             return -1;
         }
 
-        char tx_pid_str[TX_PID_STR_SIZE] = {};
-        sprintf(tx_pid_str, "P%d", getpid());
         //printf("{%s}\n", tx_pid_str);
         write(in_hndshk_fifo_fd, tx_pid_str, TX_PID_STR_SIZE);
         
-        //Transfer
-        int file_fd = open(argv[1], O_RDONLY);
-        if (file_fd == -1)
-        {
-            printf("File opening error.\n");
-            return -1;
-        }
-
-        errno = 0;
-        if (mkfifo(tx_pid_str, 0666) && (errno != EEXIST))
-        {
-            printf("FIFO '%s' creation error.\n", tx_pid_str);
-            close(file_fd);
-            return -1;
-        }
-
         int in_fifo_fd = open(tx_pid_str, O_WRONLY);
         if (in_fifo_fd == -1)
         {
@@ -114,6 +114,8 @@ int main(int argc, char *argv[])
             close(file_fd);
             return -1;
         }
+
+        //Transfer
 
         int read_num = 1;
         char in_buffer[PIPE_BUF];

@@ -9,6 +9,9 @@
 #include <linux/limits.h>
 #include <errno.h>
 
+#define CLR_RED     "\x1b[31m"
+#define CLR_DEFAULT "\x1b[0m"
+
 struct message {
     long int type;
     char text;
@@ -44,13 +47,16 @@ int main(int argc, char const *argv[])
             return 1;
         }
     }
-    printf("num = %ld\n", num);
+    //printf("num = %ld\n", num);
 
     errno = 0;
     int msqid = msgget(IPC_PRIVATE, 0666);
-    //perror(NULL);
-    struct message msg = {0l, 1};
-
+    if (errno != 0)
+    {
+        perror(NULL);
+        return 1;
+    }
+    struct message msg = {0l, 0};
     int pid;
 
     for (int i = 1; i <= num; ++i)
@@ -59,25 +65,65 @@ int main(int argc, char const *argv[])
         switch(pid) 
         {
         case -1: 
-            printf("Fork failed.\n");
-            
-            exit(-1);
+            printf("%sFork #%d has failed.\n%s", CLR_RED, i, CLR_DEFAULT);
+            //kill(0, SIGKILL);
+            for (int j = 1; j < i; ++j)
+            {
+                msg.type = j;
+                msg.text = 1;
+                errno = 0;
+                msgsnd(msqid, &msg, sizeof(msg.text), 0666);
+                if (errno != 0)
+                {
+                    perror(NULL);
+                    break;
+                }
+            }
+            errno = 0;
+            if (msgctl(msqid, IPC_RMID, NULL) != 0)
+                perror(NULL);
+            exit(1);
         case 0: 
             errno = 0;
             msgrcv(msqid, &msg, sizeof(msg.text), i, 0666);
-            //perror(NULL);
+            if (errno != 0)
+            {
+                perror(NULL);
+                errno = 0;
+                if (msgctl(msqid, IPC_RMID, NULL) != 0)
+                    perror(NULL);
+                exit(1);
+            }
+
+            if (msg.text != 0) //One of forks has failed
+            {
+                exit(1);
+            }
+
             printf("%ld\n", msg.type);
             if (msg.type == num)
             {
-                printf("Last!\n");
                 errno = 0;
-                msgctl(msqid, IPC_RMID, NULL);
+                if (msgctl(msqid, IPC_RMID, NULL) != 0)
+                {
+                    perror(NULL);
+                    exit(1);
+                }
                 exit(0);    
             }
+
             ++msg.type;
             errno = 0;
             msgsnd(msqid, &msg, sizeof(msg.text), 0666);
-            //perror(NULL);
+            if (errno != 0)
+            {
+                perror(NULL);
+                errno = 0;
+                if (msgctl(msqid, IPC_RMID, NULL) != 0)
+                    perror(NULL);
+                exit(1);
+            }
+
             exit(0);
         default: 
             break;
@@ -87,7 +133,14 @@ int main(int argc, char const *argv[])
     msg.type = 1;
     errno = 0;
     msgsnd(msqid, &msg, sizeof(msg.text), 0666);
-    //perror(NULL);
+    if (errno != 0)
+    {
+        perror(NULL);
+        errno = 0;
+        if (msgctl(msqid, IPC_RMID, NULL) != 0)
+            perror(NULL);
+        exit(1);
+    }
 
     return 0;
 }

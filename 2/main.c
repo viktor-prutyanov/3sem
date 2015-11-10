@@ -47,10 +47,11 @@ int main(int argc, char const *argv[])
             return 1;
         }
     }
-    //printf("num = %ld\n", num);
+
+    key_t key = ftok(argv[0], getpid());
 
     errno = 0;
-    int msqid = msgget(IPC_PRIVATE, 0666);
+    int msqid = msgget(key, IPC_CREAT | 0666);
     if (errno != 0)
     {
         perror(NULL);
@@ -66,19 +67,18 @@ int main(int argc, char const *argv[])
         {
         case -1: 
             printf("%sFork #%d has failed.\n%s", CLR_RED, i, CLR_DEFAULT);
-            //kill(0, SIGKILL);
-            for (int j = 1; j < i; ++j)
-            {
-                msg.type = j;
-                msg.text = 1;
-                errno = 0;
-                msgsnd(msqid, &msg, sizeof(msg.text), 0666);
-                if (errno != 0)
-                {
-                    perror(NULL);
-                    break;
-                }
-            }
+            // for (int j = 1; j < i; ++j)
+            // {
+            //     msg.type = j;
+            //     msg.text = 1;
+            //     errno = 0;
+            //     msgsnd(msqid, &msg, sizeof(msg.text), 0666);
+            //     if (errno != 0)
+            //     {
+            //         perror(NULL);
+            //         break;
+            //     }
+            // }
             errno = 0;
             if (msgctl(msqid, IPC_RMID, NULL) != 0)
                 perror(NULL);
@@ -100,17 +100,7 @@ int main(int argc, char const *argv[])
                 exit(1);
             }
 
-            printf("%ld\n", msg.type);
-            if (msg.type == num)
-            {
-                errno = 0;
-                if (msgctl(msqid, IPC_RMID, NULL) != 0)
-                {
-                    perror(NULL);
-                    exit(1);
-                }
-                exit(0);    
-            }
+            fprintf(stderr, "%ld ", msg.type);
 
             ++msg.type;
             errno = 0;
@@ -141,6 +131,10 @@ int main(int argc, char const *argv[])
             perror(NULL);
         exit(1);
     }
+
+    msgrcv(msqid, &msg, sizeof(msg.text), num + 1, 0666);
+    if (msgctl(msqid, IPC_RMID, NULL) != 0)
+        perror(NULL);
 
     return 0;
 }

@@ -75,8 +75,8 @@ int main(int argc, char const *argv[])
         sop.sem_flg = 0;
         semop(semid, &sop, 1);
 
-        // shmctl(shmid, IPC_RMID, NULL);
-        // semctl(semid, 4, IPC_RMID);
+        //shmctl(shmid, IPC_RMID, NULL);
+        //semctl(semid, 4, IPC_RMID);
     }
     else if (argc == 2) //TX
     {   

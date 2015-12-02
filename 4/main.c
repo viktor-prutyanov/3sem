@@ -6,6 +6,7 @@
 #include <sys/prctl.h>
 
 char buf = 0;
+char out = 0;
 int counter = 0;
 pid_t ppid = 0;
 pid_t pid = 0;
@@ -16,7 +17,7 @@ void one(int signo)
     ++counter;
     if (counter == 8)
     {
-        printf("%c", buf);
+        sprintf(&out, "%c", buf);
         buf = 0;
         counter = 0;
     }
@@ -27,7 +28,7 @@ void zero(int signo)
     ++counter;
     if (counter == 8)
     {
-        printf("%c", buf);
+        sprintf(&out, "%c", buf);
         buf = 0;
         counter = 0;
     }
@@ -76,7 +77,7 @@ int main(int argc, char const *argv[])
 
     ppid = getpid();
     pid = fork();
-
+     
     switch(pid)
     {
     case -1:
@@ -85,6 +86,12 @@ int main(int argc, char const *argv[])
     case 0: //Child
         prctl(PR_SET_PDEATHSIG, SIGKILL);
         sigemptyset(&set);
+        
+        if (getppid() != ppid)
+        {
+            fprintf(stderr, "Parent is dead.\n");
+            exit(EXIT_FAILURE);    
+        }
 
         int in_file_fd = open(argv[1], O_RDONLY);
         if (in_file_fd == -1)
@@ -103,14 +110,12 @@ int main(int argc, char const *argv[])
         while (read_num > 0)
         {
             read_num = read(in_file_fd, &buf, 1);
-            if (read_num != 0)
+            if (read_num == 0) continue;
+            for (int i = 0; i < 8; ++i)
             {
-                for (int i = 0; i < 8; ++i)
-                {
-                    buf % 2 == 0 ? kill(ppid, SIGUSR2) : kill(ppid, SIGUSR1); 
-                    buf = buf >> 1;
-                    sigsuspend(&set);
-                }
+                buf % 2 == 0 ? kill(ppid, SIGUSR2) : kill(ppid, SIGUSR1); 
+                buf = buf >> 1;
+                sigsuspend(&set);
             }
         }
         close(in_file_fd);
@@ -119,6 +124,10 @@ int main(int argc, char const *argv[])
         while(1)
         {
             sigsuspend(&set);
+            if (counter == 7)
+            {
+                printf("%c", buf);
+            }
             kill(pid, SIGUSR1);
         }
         exit(EXIT_SUCCESS);

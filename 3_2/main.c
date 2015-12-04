@@ -35,21 +35,39 @@ int main(int argc, char const *argv[])
         key = ftok("/tmp", 2);
         int semid = semget(key, 3, 0666 | IPC_CREAT);
 
-        OP(0, SEM0, 1, SEM_UNDO);
+        OP(0, SEM0,  1, SEM_UNDO);
         OP(1, SEM0, -1, 0);
-        semop(semid, sops, 2);
-
-        OP(0, SEMR, 0, 0);
-        OP(1, SEMR, 1, SEM_UNDO);
-        semop(semid, sops, 2);
+        OP(2, SEMR, 0, 0);
+        OP(3, SEMR, 1, SEM_UNDO);
+        semop(semid, sops, 4);
         
         int print_num = 1;
 
+        OP(0, SEMT, -1, 0);
+        OP(1, SEMT,  1, 0);
+        OP(2, SEM0, -1, 0);
+        OP(3, SEM0,  1, 0);
+        semop(semid, sops, 4);
+
+        print_num = *((int *)(buf + DATA_SIZE));
+        write(1, buf, print_num);
+
+        OP(0, SEM0, -1, 0);
+        semop(semid, sops, 1);
+
         while (print_num > 0)
         {
-            OP(0, SEM0, -1, 0);
-            OP(1, SEM0, 1, 0);
-            semop(semid, sops, 2);
+            OP(0, SEMT, -1, IPC_NOWAIT);
+            OP(1, SEMT,  1, 0);
+            OP(2, SEM0, -1, 0);
+            OP(3, SEM0,  1, 0);
+            errno = 0;
+            semop(semid, sops, 4);
+            if (errno == EAGAIN)
+            {
+                fprintf(stderr, "TX dead.\n");
+                exit(EXIT_FAILURE);
+            }
 
             print_num = *((int *)(buf + DATA_SIZE));
             write(1, buf, print_num);
@@ -81,8 +99,10 @@ int main(int argc, char const *argv[])
 
         int read_num = 1;
 
-        OP(0, SEM0, 0, 0);
-        semop(semid, sops, 1);
+        OP(0, SEMR, -1, 0);
+        OP(1, SEMR,  1, 0);
+        OP(2, SEM0,  0, 0);
+        semop(semid, sops, 3);
         
         read_num = read(file_fd, buf, DATA_SIZE);
         *((int *)(buf + DATA_SIZE)) = read_num;
@@ -92,9 +112,9 @@ int main(int argc, char const *argv[])
 
         while (read_num > 0)
         {
-            OP(0, SEM0, 0, 0);
-            OP(1, SEMR, -1, IPC_NOWAIT);
-            OP(2, SEMR, 1, 0);
+            OP(0, SEMR, -1, IPC_NOWAIT);
+            OP(1, SEMR,  1, 0);
+            OP(2, SEM0,  0, 0);
             errno = 0;
             semop(semid, sops, 3);
             if (errno == EAGAIN)

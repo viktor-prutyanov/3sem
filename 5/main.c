@@ -25,6 +25,10 @@ struct bound_t
     char *end;
 };
 
+void head_child(char *buf, struct pipe_fds_t *pipes, long int num, char *filename);
+void i_child(int i, char *buf, struct pipe_fds_t *pipes, long int num);
+void clear_pipes(int num, struct pipe_fds_t *pipes, char **buffers, struct bound_t *buf_bounds);
+
 int main(int argc, char *argv[])
 {
     if (argc != 3)
@@ -64,9 +68,6 @@ int main(int argc, char *argv[])
         pipes[i].closed = 0;
     }
 
-    int flags;
-    int fcntl_ret;
-
     int pid = -1;
     for (int i = 0; i < num; ++i)
     {
@@ -82,90 +83,20 @@ int main(int argc, char *argv[])
 
             if (i == num - 1)
             {
-                for (int j = 0; j < num * 2 - 2; ++j)
-                {
-                    close(pipes[j].fds[0]);
-                    close(pipes[j].fds[1]);
-                }
-                close(pipes[2 * num - 2].fds[0]);    
-
-                int in_fd = open(argv[2], O_RDONLY);
-
-                int read_num = 1;
-                int write_num = 0;
-                while (read_num > 0)
-                {
-                    read_num = read(in_fd, buf, CHLD_BUF_SIZE);
-                    if (read_num <= 0) break;
-                    if (write(pipes[2 * num - 2].fds[1], buf, read_num) != read_num)
-                    {
-                        fprintf(stderr, "Head child transaction error.\n");
-                        exit(EXIT_FAILURE);
-                    }
-                }
-
-                close(in_fd);
-                close(pipes[2 * num - 2].fds[1]);
-                if (read_num == 0)
-                {
-                    exit(EXIT_SUCCESS);
-                }
-                else
-                {
-                    fprintf(stderr, "File reading failed in child #%d.\n", i);
-                    exit(EXIT_FAILURE);
-                }
+                head_child(buf, pipes, num, argv[2]);
             }
             else
             {
-                for (int j = 0; j < 2 * i; ++j)
-                {
-                    close(pipes[j].fds[0]);
-                    close(pipes[j].fds[1]);
-                }
-                close(pipes[2 * i].fds[0]);
-                close(pipes[2 * i + 1].fds[1]);
-                for (int j = 2 * i + 2; j < num * 2 - 1; ++j)
-                {
-                    close(pipes[j].fds[0]);
-                    close(pipes[j].fds[1]);
-                }
-
-                int read_num = 1;
-                int write_num = 0;
-                while (read_num > 0)
-                {
-                    read_num = read(pipes[2 * i + 1].fds[0], buf, CHLD_BUF_SIZE);
-                    if (read_num <= 0) break;
-                    if (write(pipes[2 * i].fds[1], buf, read_num) != read_num)
-                    {
-                        fprintf(stderr, "Child transaction error.\n");
-                        exit(EXIT_FAILURE);
-                    }
-                }
-
-                close(pipes[2 * i].fds[1]);
-                close(pipes[2 * i + 1].fds[0]);
-                if (read_num == 0)
-                {
-                    exit(EXIT_SUCCESS);
-                }
-                else
-                {
-                    fprintf(stderr, "Pipe reading failed in child #%d.\n", i);
-                    exit(EXIT_FAILURE);
-                }
+                i_child(i, buf, pipes, num);
             }
         default: 
             close(pipes[2 * i].fds[1]);
-            flags = fcntl(pipes[2 * i].fds[0], F_GETFL, 0);
+            int flags = fcntl(pipes[2 * i].fds[0], F_GETFL, 0);
             fcntl(pipes[2 * i].fds[0], F_SETFL, flags | O_NONBLOCK); 
-            if (i != 0)
-            {
-                close(pipes[2 * i - 1].fds[0]);
-                flags = fcntl(pipes[2 * i - 1].fds[1], F_GETFL, 0);
-                fcntl(pipes[2 * i - 1].fds[1], F_SETFL, flags | O_NONBLOCK);  
-            }
+            if (i == 0) break;
+            close(pipes[2 * i - 1].fds[0]);
+            flags = fcntl(pipes[2 * i - 1].fds[1], F_GETFL, 0);
+            fcntl(pipes[2 * i - 1].fds[1], F_SETFL, flags | O_NONBLOCK);  
             break;
         }
     }
@@ -190,31 +121,6 @@ int main(int argc, char *argv[])
 
     while(1)
     {
-        FD_ZERO(&read_fds);
-        FD_ZERO(&write_fds);
-        int max_no = -1;
-        for (int i = 0; i < num; ++i)
-        {
-            if (!pipes[2 * i].closed)
-            {
-                FD_SET(pipes[2 * i].fds[0], &read_fds);
-                if (pipes[2 * i].fds[0] > max_no)
-                {
-                    max_no = pipes[2 * i].fds[0];
-                }
-            }
-            if ((i != 0) && (!pipes[2 * i - 1].closed))
-            {
-                FD_SET(pipes[2 * i - 1].fds[1], &write_fds);
-                if (pipes[2 * i - 1].fds[1] > max_no)
-                {
-                    max_no = pipes[2 * i - 1].fds[1];
-                }
-            }
-        }
-    
-        select(max_no + 1, &read_fds, &write_fds, NULL, NULL);
-    
         size_t buf_engaged = buf_bounds[0].begin - buffers[0]; 
         if (buf_engaged != 0)
         {
@@ -224,15 +130,40 @@ int main(int argc, char *argv[])
                 memmove(buffers[0], buffers[0] + write_num, buf_engaged - write_num); 
             }
             buf_bounds[0].begin -= write_num;
-        }   
-        for (int i = num - 1; i >= 0; --i)   
+        }  
+
+        FD_ZERO(&read_fds);
+        FD_ZERO(&write_fds);
+        int max_no = -1;
+        for (int i = 0; i < num; ++i)
+        {
+            if ((i != 0) && (!pipes[2 * i - 1].closed) && (buf_bounds[i].begin != buffers[i]))
+            {
+                FD_SET(pipes[2 * i - 1].fds[1], &write_fds);
+                if (pipes[2 * i - 1].fds[1] > max_no)
+                {
+                    max_no = pipes[2 * i - 1].fds[1];
+                }
+            }
+            if ((!pipes[2 * i].closed) && (buf_bounds[i].end != buf_bounds[i].begin))
+            {
+                FD_SET(pipes[2 * i].fds[0], &read_fds);
+                if (pipes[2 * i].fds[0] > max_no)
+                {
+                    max_no = pipes[2 * i].fds[0];
+                }
+            }
+        }
+    
+        select(max_no + 1, &read_fds, &write_fds, NULL, NULL);
+ 
+        for (int i = 0; i < num; ++i)   
         {
             buf_engaged = buf_bounds[i].begin - buffers[i];
             if ((i != 0) && (buf_engaged != 0) && (FD_ISSET(pipes[2 * i - 1].fds[1], &write_fds) != 0))
             {
                 size_t to_write = (buf_engaged > BLOCK_SIZE) ? BLOCK_SIZE : buf_engaged;
                 write_num = write(pipes[2 * i - 1].fds[1], buffers[i], to_write);
-                //fprintf(stderr, "#%d: {engaged = %lu; write_num = %d}\n", i, buf_engaged, write_num);
                 if (write_num != buf_engaged)
                 {
                     memmove(buffers[i], buffers[i] + write_num, buf_engaged - write_num);   
@@ -259,24 +190,107 @@ int main(int argc, char *argv[])
                 }
             }
         }
+    
+    clear_pipes(num, pipes, buffers, buf_bounds);
+    }
 
-        for (int i = 0; i < num; ++i)
+    return 0;
+}
+
+inline void clear_pipes(int num, struct pipe_fds_t *pipes, char **buffers, struct bound_t *buf_bounds)
+{
+    for (int i = 0; i < num; ++i)
+    {
+        if (pipes[2 * i].closed && (buffers[i] == buf_bounds[i].begin))
         {
-            if (pipes[2 * i].closed && (buffers[i] == buf_bounds[i].begin))
+            if (i == 0)
             {
-                if (i == 0)
-                {
-                    free(buffers[0]);
-                    exit(EXIT_SUCCESS);
-                }
-                else if (!pipes[2 * i - 1].closed)
-                {
-                    free(buffers[i]);
-                    close(pipes[2 * i - 1].fds[1]);
-                    pipes[2 * i - 1].closed = 1;
-                }
+                free(buffers[0]);
+                exit(EXIT_SUCCESS);
+            }
+            else if (!pipes[2 * i - 1].closed)
+            {
+                free(buffers[i]);
+                close(pipes[2 * i - 1].fds[1]);
+                pipes[2 * i - 1].closed = 1;
             }
         }
     }
-    return 0;
+}
+
+inline void head_child(char *buf, struct pipe_fds_t *pipes, long int num, char *filename)
+{
+    for (int j = 0; j < num * 2 - 2; ++j)
+    {
+        close(pipes[j].fds[0]);
+        close(pipes[j].fds[1]);
+    }
+    close(pipes[2 * num - 2].fds[0]);    
+    int in_fd = open(filename, O_RDONLY);
+    int read_num = 1;
+    while (read_num > 0)
+    {
+        read_num = read(in_fd, buf, CHLD_BUF_SIZE);
+        if (read_num <= 0) break;
+        if (write(pipes[2 * num - 2].fds[1], buf, read_num) != read_num)
+        {
+            fprintf(stderr, "Head child transaction error.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    close(in_fd);
+    close(pipes[2 * num - 2].fds[1]);
+    if (read_num == 0)
+    {
+        exit(EXIT_SUCCESS);
+    }
+    else
+    {
+        fprintf(stderr, "File reading failed in head child #%lu.\n", num - 1);
+        exit(EXIT_FAILURE);
+    }
+}
+
+inline void i_child(int i, char *buf, struct pipe_fds_t *pipes, long int num)
+{
+    for (int j = 0; j < 2 * i; ++j)
+    {
+        close(pipes[j].fds[0]);
+        close(pipes[j].fds[1]);
+    }
+    close(pipes[2 * i].fds[0]);
+    close(pipes[2 * i + 1].fds[1]);
+    for (int j = 2 * i + 2; j < num * 2 - 1; ++j)
+    {
+        close(pipes[j].fds[0]);
+        close(pipes[j].fds[1]);
+    }
+
+    //sleep(10);
+
+    int read_num = 1;
+    while (read_num > 0)
+    {
+        read_num = read(pipes[2 * i + 1].fds[0], buf, CHLD_BUF_SIZE);
+        if (read_num <= 0) break;
+        //sleep(1);
+        if (write(pipes[2 * i].fds[1], buf, read_num) != read_num)
+        {
+            fprintf(stderr, "Child transaction error.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    //sleep(10);
+
+    close(pipes[2 * i].fds[1]);
+    close(pipes[2 * i + 1].fds[0]);
+    if (read_num == 0)
+    {
+        exit(EXIT_SUCCESS);
+    }
+    else
+    {
+        fprintf(stderr, "Pipe reading failed in child #%d.\n", i);
+        exit(EXIT_FAILURE);
+    }
 }
